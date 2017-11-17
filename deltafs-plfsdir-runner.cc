@@ -118,7 +118,8 @@ static uint64_t now() {
 #define DEF_BBOS_HOSTNAME "127.0.0.1"
 #define DEF_BBOS_PORT 12345
 #define DEF_NUM_EPOCHS 8
-#define DEF_NUM_KEYS_PER_EPOCH 1024
+#define DEF_NUM_KEYS_PER_EPOCH (1 << 10)
+#define DEF_IO_SIZE (2 << 20)
 #define DEF_FILTER_BITS 10
 #define DEF_KEY_SIZE 8
 #define DEF_VAL_SIZE 32
@@ -139,6 +140,7 @@ struct gs {
   int filterbits;
   int keysz;
   int valsz;
+  int iosz;
   int logrotation;
   int timeout;
   int v;
@@ -178,6 +180,7 @@ static void printopts() {
   printf("\tkey size: %d\n", g.keysz);
   printf("\tvalue size: %d\n", g.valsz);
   printf("\tfilter bits per key: %d\n", g.filterbits);
+  printf("\tio size: %d\n", g.iosz);
   printf("\tlog rotation: %d\n", g.logrotation);
   printf("\tbbos: %d\n", g.bbos);
   printf("\tbbos hostname: %s\n", g.bboshostname);
@@ -197,6 +200,10 @@ static void mkconf() {
   if (g.bg && !bgp) complain("fail to init thread pool");
 
   n = snprintf(cf, sizeof(cf), "rank=%d", g.myrank);
+  n += snprintf(cf + n, sizeof(cf) - n, "&data_buffer=%d", g.iosz);
+  n += snprintf(cf + n, sizeof(cf) - n, "&min_data_buffer=%d", g.iosz);
+  n += snprintf(cf + n, sizeof(cf) - n, "&index_buffer=%d", g.iosz);
+  n += snprintf(cf + n, sizeof(cf) - n, "&min_index_buffer=%d", g.iosz);
   n += snprintf(cf + n, sizeof(cf) - n, "&key_size=%d", g.keysz);
   n += snprintf(cf + n, sizeof(cf) - n, "&value_size=%d", g.valsz);
   n += snprintf(cf + n, sizeof(cf) - n, "&bf_bits_per_key=%d", g.filterbits);
@@ -291,8 +298,12 @@ int main(int argc, char* argv[]) {
   g.bbosport = DEF_BBOS_PORT;
   g.timeout = DEF_TIMEOUT;
 
-  while ((ch = getopt(argc, argv, "e:n:f:k:d:j:t:rvb")) != -1) {
+  while ((ch = getopt(argc, argv, "s:e:n:f:k:d:j:t:rvb")) != -1) {
     switch (ch) {
+      case 's':
+        g.iosz = atoi(optarg);
+        if (g.iosz <= 0) usage("bad io size");
+        break;
       case 'e':
         g.nepochs = atoi(optarg);
         if (g.nepochs < 0) usage("bad epoch nums");
