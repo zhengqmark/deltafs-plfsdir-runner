@@ -213,12 +213,32 @@ static void mkconf() {
 }
 
 /*
- * writeone: insert data into plfsdir
+ * writekey: write a key into plfsdir
  */
-static void writeone(int e) {
+static void writekey(int k, int e, const std::string& v) {
+  char fname[20];
   int r;
 
   assert(dir != NULL);
+
+  snprintf(fname, sizeof(fname), "f%08x-r%08x", k, g.myrank);
+  r = deltafs_plfsdir_append(dir, fname, e, v.data(), v.size());
+  if (r) complain("error writing %s: %s", fname, strerror(errno));
+}
+
+/*
+ * writepoch: insert epoch data into plfsdir
+ */
+static void writepoch(int e) {
+  std::string v;
+  int r;
+
+  assert(dir != NULL);
+
+  v.resize(g.valsz, '.');
+  for (int i = 0; i < g.nkeys; i++) {
+    writekey(i, e, v);
+  }
 
   r = MPI_Barrier(MPI_COMM_WORLD);
   if (r != MPI_SUCCESS) complain("fail to do mpi barrier");
@@ -239,7 +259,7 @@ static void write() {
   r = deltafs_plfsdir_open(dir, g.dirname);
   if (r) complain("error opening dir: %s", strerror(errno));
   for (int e = 0; e < g.nepochs; e++) {
-    writeone(e);
+    writepoch(e);
   }
 
   r = deltafs_plfsdir_finish(dir);
@@ -332,6 +352,8 @@ int main(int argc, char* argv[]) {
   env = NULL;
   bgp = NULL;
 
+  if (g.v && !g.myrank) info("test begins ...");
+  MPI_Barrier(MPI_COMM_WORLD);
   write();
 
   MPI_Finalize();
