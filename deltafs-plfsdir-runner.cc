@@ -60,6 +60,10 @@ static deltafs_plfsdir_t* dir; /* plfsdir handle */
 static deltafs_env_t* env;     /* plfsdir storage abs */
 static deltafs_tp_t* bgp;      /* plfsdir worker thread pool */
 static char cf[500];           /* plfsdir conf str */
+static struct bbos_conf {
+  char remote[50]; /* bbos remote uri */
+  char lo[50];     /* bbos local uri */
+} b;
 
 /*
  * vcomplain/complain about something and exit.
@@ -191,6 +195,27 @@ static void printopts() {
 }
 
 /*
+ * mkbbos: init bbos env
+ */
+static void mkbbos() {
+  void* a[5];
+
+  if (!g.bbos || env) return;
+
+  a[0] = const_cast<char*>("bbos");
+  snprintf(b.remote, sizeof(b.remote), "bmi+tcp://%s:%d", g.bboshostname,
+           g.bbosport);
+  a[1] = b.remote;
+  snprintf(b.lo, sizeof(b.lo), "bmi+tcp");
+  a[2] = b.lo;
+  a[3] = NULL;
+  a[4] = NULL;
+
+  env = deltafs_env_init(5, a);
+  if (!env) complain("fail to init bbos env");
+}
+
+/*
  * mkconf: generate plfsdir conf
  */
 static void mkconf() {
@@ -255,6 +280,7 @@ static void writepoch(int e) {
  */
 static void write() {
   int r;
+  if (g.bbos) mkbbos();
   mkconf();
   dir = deltafs_plfsdir_create_handle(cf, O_WRONLY);
   if (bgp) deltafs_plfsdir_set_thread_pool(dir, bgp);
@@ -280,6 +306,8 @@ int main(int argc, char* argv[]) {
   if (r != MPI_SUCCESS) complain("fail to init mpi");
   argv0 = argv[0];
   memset(cf, 0, sizeof(cf));
+  memset(b.remote, 0, sizeof(b.remote));
+  memset(b.lo, 0, sizeof(b.lo));
   /* we want lines, even if we are writing to a pipe */
   setlinebuf(stdout);
 
@@ -297,6 +325,7 @@ int main(int argc, char* argv[]) {
   g.bboshostname = DEF_BBOS_HOSTNAME;
   g.bbosport = DEF_BBOS_PORT;
   g.timeout = DEF_TIMEOUT;
+  g.iosz = DEF_IO_SIZE;
 
   while ((ch = getopt(argc, argv, "s:e:n:f:k:d:j:t:rvb")) != -1) {
     switch (ch) {
