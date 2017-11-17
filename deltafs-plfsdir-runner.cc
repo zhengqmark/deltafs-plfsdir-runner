@@ -60,13 +60,6 @@ static deltafs_plfsdir_t* dir; /* plfsdir handle */
 static deltafs_env_t* env;     /* plfsdir storage abs */
 static deltafs_tp_t* bgp;      /* plfsdir worker thread pool */
 static char cf[500];           /* plfsdir conf str */
-static struct plfsdir_conf {
-  int value_size;
-  int key_size;
-  int filter_bits_per_key;
-  int skip_crc32c;
-  int lg_parts;
-} c;
 
 /*
  * vcomplain/complain about something and exit.
@@ -146,6 +139,7 @@ struct gs {
   int filterbits;
   int keysz;
   int valsz;
+  int logrotation;
   int timeout;
   int v;
 } g;
@@ -184,6 +178,7 @@ static void printopts() {
   printf("\tkey size: %d\n", g.keysz);
   printf("\tvalue size: %d\n", g.valsz);
   printf("\tfilter bits per key: %d\n", g.filterbits);
+  printf("\tlog rotation: %d\n", g.logrotation);
   printf("\tbbos: %d\n", g.bbos);
   printf("\tbbos hostname: %s\n", g.bboshostname);
   printf("\tbbos port: %d\n", g.bbosport);
@@ -205,6 +200,8 @@ static void mkconf() {
   n += snprintf(cf + n, sizeof(cf) - n, "&key_size=%d", g.keysz);
   n += snprintf(cf + n, sizeof(cf) - n, "&value_size=%d", g.valsz);
   n += snprintf(cf + n, sizeof(cf) - n, "&bf_bits_per_key=%d", g.filterbits);
+  n +=
+      snprintf(cf + n, sizeof(cf) - n, "&epoch_log_rotation=%d", g.logrotation);
   snprintf(cf + n, sizeof(cf) - n, "&lg_parts=%d", 0);
 
 #ifndef NDEBUG
@@ -294,7 +291,7 @@ int main(int argc, char* argv[]) {
   g.bbosport = DEF_BBOS_PORT;
   g.timeout = DEF_TIMEOUT;
 
-  while ((ch = getopt(argc, argv, "e:n:f:k:d:j:t:vb")) != -1) {
+  while ((ch = getopt(argc, argv, "e:n:f:k:d:j:t:rvb")) != -1) {
     switch (ch) {
       case 'e':
         g.nepochs = atoi(optarg);
@@ -323,6 +320,9 @@ int main(int argc, char* argv[]) {
       case 't':
         g.timeout = atoi(optarg);
         if (g.timeout < 0) usage("bad timeout");
+        break;
+      case 'r':
+        g.logrotation = 1;
         break;
       case 'b':
         g.bbos = 1;
