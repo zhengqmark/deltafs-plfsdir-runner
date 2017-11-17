@@ -114,11 +114,11 @@ static uint64_t now() {
 /*
  * default values
  */
-#define DEF_TIMEOUT 300 /* alarm timeout */
+#define DEF_TIMEOUT 300 /* alarm timeout (secs) */
 #define DEF_BBOS_HOSTNAME "127.0.0.1"
 #define DEF_BBOS_PORT 12345
 #define DEF_NUM_EPOCHS 8
-#define DEF_NUM_KEYS_PER_EPOCH (1 << 20)
+#define DEF_NUM_KEYS_PER_EPOCH 1024
 #define DEF_FILTER_BITS 10
 #define DEF_KEY_SIZE 8
 #define DEF_VAL_SIZE 32
