@@ -34,7 +34,9 @@
  * a simple testing program for accessing deltafs plfsdirs.
  */
 
+#include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -53,10 +55,11 @@
  * helper/utility functions, included inline here so we are self-contained
  * in one single source file...
  */
-static char* argv0;        /* argv[0], program name */
-static deltafs_env_t* env; /* underlying storage abstraction */
-static deltafs_tp_t* tp;   /* plfsdir worker thread pool */
-static char cf[500];       /* plfsdir conf str */
+static char* argv0;            /* argv[0], program name */
+static deltafs_plfsdir_t* dir; /* plfsdir handle */
+static deltafs_env_t* env;     /* plfsdir storage abs */
+static deltafs_tp_t* bgp;      /* plfsdir worker thread pool */
+static char cf[500];           /* plfsdir conf str */
 static struct plfsdir_conf {
   int value_size;
   int key_size;
@@ -123,6 +126,7 @@ static uint64_t now() {
 #define DEF_BBOS_PORT 12345
 #define DEF_NUM_EPOCHS 8
 #define DEF_NUM_KEYS_PER_EPOCH (1 << 20)
+#define DEF_FILTER_BITS 10
 #define DEF_KEY_SIZE 8
 #define DEF_VAL_SIZE 32
 
@@ -138,7 +142,8 @@ struct gs {
   int myrank;
   int commsz;
   int nepochs;
-  int nkeysperrank;
+  int nkeys;
+  int filterbits;
   int keysz;
   int valsz;
   int timeout;
@@ -155,7 +160,7 @@ static void sigalarm(int foo) {
 }
 
 /*
- * usage
+ * usage: print usage and exit
  */
 static void usage(const char* msg) {
   if (msg) fprintf(stderr, "%s: %s\n", argv0, msg);
@@ -167,6 +172,82 @@ static void usage(const char* msg) {
 }
 
 /*
+ * printopts: print global options
+ */
+static void printopts() {
+  printf("\n%s\n==options:\n", argv0);
+  printf("\ttimeout: %d\n", g.timeout);
+  printf("\tnum bg threads: %d\n", g.bg);
+  printf("\tnum epochs: %d\n", g.nepochs);
+  printf("\tnum keys per epoch: %d (per rank)\n", g.nkeys);
+  printf("\tplfsdir: %s\n", g.dirname);
+  printf("\tkey size: %d\n", g.keysz);
+  printf("\tvalue size: %d\n", g.valsz);
+  printf("\tfilter bits per key: %d\n", g.filterbits);
+  printf("\tbbos: %d\n", g.bbos);
+  printf("\tbbos hostname: %s\n", g.bboshostname);
+  printf("\tbbos port: %d\n", g.bbosport);
+  printf("\tmpi comm size: %d\n", g.commsz);
+  printf("\tverbose: %d\n", g.v);
+  printf("\n");
+}
+
+/*
+ * mkconf: generate plfsdir conf
+ */
+static void mkconf() {
+  int n;
+
+  if (g.bg && !bgp) bgp = deltafs_tp_init(g.bg);
+  if (g.bg && !bgp) complain("fail to init thread pool");
+
+  n = snprintf(cf, sizeof(cf), "rank=%d", g.myrank);
+  n += snprintf(cf + n, sizeof(cf) - n, "&key_size=%d", g.keysz);
+  n += snprintf(cf + n, sizeof(cf) - n, "&value_size=%d", g.valsz);
+  n += snprintf(cf + n, sizeof(cf) - n, "&bf_bits_per_key=%d", g.filterbits);
+  snprintf(cf + n, sizeof(cf) - n, "&lg_parts=%d", 0);
+
+#ifndef NDEBUG
+  info(cf);
+#endif
+}
+
+/*
+ * writeone: insert data into plfsdir
+ */
+static void writeone(int e) {
+  int r;
+
+  assert(dir != NULL);
+
+  r = MPI_Barrier(MPI_COMM_WORLD);
+  if (r != MPI_SUCCESS) complain("fail to do mpi barrier");
+  r = deltafs_plfsdir_epoch_flush(dir, e);
+  if (r) complain("error flushing dir: %s", strerror(errno));
+}
+
+/*
+ * write: insert data into plfsdir as multiple epochs
+ */
+static void write() {
+  int r;
+  mkconf();
+  dir = deltafs_plfsdir_create_handle(cf, O_WRONLY);
+  if (bgp) deltafs_plfsdir_set_thread_pool(dir, bgp);
+  if (env) deltafs_plfsdir_set_env(dir, env);
+
+  r = deltafs_plfsdir_open(dir, g.dirname);
+  if (r) complain("error opening dir: %s", strerror(errno));
+  for (int e = 0; e < g.nepochs; e++) {
+    writeone(e);
+  }
+
+  r = deltafs_plfsdir_finish(dir);
+  if (r) complain("error finalizing dir: %s", strerror(errno));
+  deltafs_plfsdir_free_handle(dir);
+}
+
+/*
  * main program
  */
 int main(int argc, char* argv[]) {
@@ -175,7 +256,6 @@ int main(int argc, char* argv[]) {
   if (r != MPI_SUCCESS) complain("fail to init mpi");
   argv0 = argv[0];
   memset(cf, 0, sizeof(cf));
-
   /* we want lines, even if we are writing to a pipe */
   setlinebuf(stdout);
 
@@ -186,15 +266,36 @@ int main(int argc, char* argv[]) {
   if (r != MPI_SUCCESS) complain("cannot get mpi world size");
 
   g.nepochs = DEF_NUM_EPOCHS;
-  g.nkeysperrank = DEF_NUM_KEYS_PER_EPOCH;
+  g.nkeys = DEF_NUM_KEYS_PER_EPOCH;
+  g.filterbits = DEF_FILTER_BITS;
   g.keysz = DEF_KEY_SIZE;
   g.valsz = DEF_VAL_SIZE;
   g.bboshostname = DEF_BBOS_HOSTNAME;
   g.bbosport = DEF_BBOS_PORT;
   g.timeout = DEF_TIMEOUT;
 
-  while ((ch = getopt(argc, argv, "j:t:v")) != -1) {
+  while ((ch = getopt(argc, argv, "e:n:f:k:d:j:t:vb")) != -1) {
     switch (ch) {
+      case 'e':
+        g.nepochs = atoi(optarg);
+        if (g.nepochs < 0) usage("bad epoch nums");
+        break;
+      case 'n':
+        g.nkeys = atoi(optarg);
+        if (g.nkeys < 0) usage("bad key nums");
+        break;
+      case 'f':
+        g.filterbits = atoi(optarg);
+        if (g.filterbits < 0) usage("bad filter bits");
+        break;
+      case 'k':
+        g.keysz = atoi(optarg);
+        if (g.keysz <= 0) usage("bad key size");
+        break;
+      case 'd':
+        g.valsz = atoi(optarg);
+        if (g.valsz < 0) usage("bad value size");
+        break;
       case 'j':
         g.bg = atoi(optarg);
         if (g.bg < 0) usage("bad bg number");
@@ -202,6 +303,9 @@ int main(int argc, char* argv[]) {
       case 't':
         g.timeout = atoi(optarg);
         if (g.timeout < 0) usage("bad timeout");
+        break;
+      case 'b':
+        g.bbos = 1;
         break;
       case 'v':
         g.v = 1;
@@ -213,14 +317,27 @@ int main(int argc, char* argv[]) {
   argc -= optind;
   argv += optind;
 
-  if (argc != 1) /* plfsdir must be provided on command line */
+  if (argc == 0) /* plfsdir must be provided on command line */
     usage("bad args");
   g.dirname = argv[0];
+  if (argc > 1) g.bboshostname = argv[1];
+  if (argc > 2) g.bbosport = atoi(argv[2]);
+  if (g.bbosport <= 0) usage("bad bbos port");
+  printopts();
 
   signal(SIGALRM, sigalarm);
   alarm(g.timeout);
 
+  dir = NULL;
+  env = NULL;
+  bgp = NULL;
+
+  write();
+
   MPI_Finalize();
 
-  return 0;
+  if (g.v && !g.myrank) info("all done!");
+  if (g.v && !g.myrank) info("bye");
+
+  exit(0);
 }
