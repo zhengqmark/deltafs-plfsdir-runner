@@ -119,6 +119,7 @@ static uint64_t now() {
  * default values
  */
 #define DEF_TIMEOUT 300 /* alarm timeout (secs) */
+#define DEF_BBOS_PROTO "bmi+tcp"
 #define DEF_BBOS_HOSTNAME "127.0.0.1"
 #define DEF_BBOS_PORT 12345
 #define DEF_NUM_EPOCHS 8
@@ -135,6 +136,7 @@ struct gs {
   int bg;
   int bbos;
   int bbosport;
+  const char* bbosproto;
   const char* bboshostname;
   const char* dirname;
   int myrank;
@@ -187,6 +189,7 @@ static void printopts() {
   printf("\tio size: %d\n", g.iosz);
   printf("\tlog rotation: %d\n", g.logrotation);
   printf("\tbbos: %d\n", g.bbos);
+  printf("\tbbos proto: %s\n", g.bbosproto);
   printf("\tbbos hostname: %s\n", g.bboshostname);
   printf("\tbbos port: %d\n", g.bbosport);
   printf("\tmpi comm size: %d\n", g.commsz);
@@ -194,6 +197,9 @@ static void printopts() {
   printf("\n");
 }
 
+/*
+ * printerr: print deltafs internal errors
+ */
 static void printerr(const char* err, void* a) {
   fprintf(stderr, " >> [deltafs] %s\n", err);
 }
@@ -208,10 +214,10 @@ static void mkbbos() {
   if (!g.bbos || env) return;
 
   a[0] = env_name;
-  snprintf(b.lo, sizeof(b.lo), "bmi+tcp");
+  snprintf(b.lo, sizeof(b.lo), "%s", g.bbosproto);
   a[1] = b.lo;
-  snprintf(b.remote, sizeof(b.remote), "bmi+tcp://%s:%d", g.bboshostname,
-           g.bbosport);
+  snprintf(b.remote, sizeof(b.remote), "%s://%s:%d", g.bbosproto,
+           g.bboshostname, g.bbosport);
   a[2] = b.remote;
   a[3] = NULL;
   a[4] = NULL;
@@ -329,6 +335,7 @@ int main(int argc, char* argv[]) {
   g.filterbits = DEF_FILTER_BITS;
   g.keysz = DEF_KEY_SIZE;
   g.valsz = DEF_VAL_SIZE;
+  g.bbosproto = DEF_BBOS_PROTO;
   g.bboshostname = DEF_BBOS_HOSTNAME;
   g.bbosport = DEF_BBOS_PORT;
   g.timeout = DEF_TIMEOUT;
