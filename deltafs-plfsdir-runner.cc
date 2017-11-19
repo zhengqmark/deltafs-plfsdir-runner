@@ -198,16 +198,17 @@ static void printopts() {
  * mkbbos: init bbos env
  */
 static void mkbbos() {
+  char env_name[] = "bbos";
   void* a[5];
 
   if (!g.bbos || env) return;
 
-  a[0] = const_cast<char*>("bbos");
+  a[0] = env_name;
+  snprintf(b.lo, sizeof(b.lo), "bmi+tcp");
+  a[1] = b.lo;
   snprintf(b.remote, sizeof(b.remote), "bmi+tcp://%s:%d", g.bboshostname,
            g.bbosport);
-  a[1] = b.remote;
-  snprintf(b.lo, sizeof(b.lo), "bmi+tcp");
-  a[2] = b.lo;
+  a[2] = b.remote;
   a[3] = NULL;
   a[4] = NULL;
 
