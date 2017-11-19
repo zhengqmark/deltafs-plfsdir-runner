@@ -194,6 +194,10 @@ static void printopts() {
   printf("\n");
 }
 
+static void printerr(const char* err, void* a) {
+  fprintf(stderr, " >> [deltafs] %s\n", err);
+}
+
 /*
  * mkbbos: init bbos env
  */
@@ -226,6 +230,7 @@ static void mkconf() {
   if (g.bg && !bgp) complain("fail to init thread pool");
 
   n = snprintf(cf, sizeof(cf), "rank=%d", g.myrank);
+  n += snprintf(cf + n, sizeof(cf) - n, "&tail_padding=1&block_padding=1");
   n += snprintf(cf + n, sizeof(cf) - n, "&data_buffer=%d", g.iosz);
   n += snprintf(cf + n, sizeof(cf) - n, "&min_data_buffer=%d", g.iosz);
   n += snprintf(cf + n, sizeof(cf) - n, "&index_buffer=%d", g.iosz);
@@ -284,6 +289,7 @@ static void write() {
   if (g.bbos) mkbbos();
   mkconf();
   dir = deltafs_plfsdir_create_handle(cf, O_WRONLY);
+  deltafs_plfsdir_set_err_printer(dir, printerr, NULL);
   if (bgp) deltafs_plfsdir_set_thread_pool(dir, bgp);
   if (env) deltafs_plfsdir_set_env(dir, env);
 
